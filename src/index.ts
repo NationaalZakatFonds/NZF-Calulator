@@ -136,102 +136,90 @@ const init = async () => {
             return;
         }
 
-        // amountNumber * 100 because stripe does the input price / 100
-        let correctStripeAmount = amountNumber * 100;
-        const payment_intent = await createPaymentIntent(correctStripeAmount);
-        if (!payment_intent) return;
+        try {
+            // amountNumber * 100 because stripe does the input price / 100
+            let correctStripeAmount = amountNumber * 100;
+            const payment_intent = await createPaymentIntent(correctStripeAmount);
+            if (!payment_intent) return;
 
-        await elements.submit()
+            // Geen elements.submit(): dat hoort bij het Payment Element. Voor losse
+            // idealBank- en card-elementen wijst Stripe.js het inmiddels af met
+            // "Unable to select session", waardoor de betaling nooit startte.
 
-        const isSadakaPayment = payment_intent.isSadakaPayment ? payment_intent.isSadakaPayment : false;
-        console.log(payment_intent)
+            const isSadakaPayment = payment_intent.isSadakaPayment ? payment_intent.isSadakaPayment : false;
+            console.log(payment_intent)
 
-        let userData = sessionStorage.getItem("userslowlane");
-        let userdataclean = userData ? JSON.parse(userData) : {};
+            let userData = sessionStorage.getItem("userslowlane");
+            let userdataclean = userData ? JSON.parse(userData) : {};
         
-        userdataclean.paymentIntent_id = payment_intent.paymentIntent_id;
-        sessionStorage.setItem("userslowlane", JSON.stringify(userdataclean));
-        localStorage.removeItem("user");
-        const currentTime = new Date();
-        const userObject = {
-            ...userdataclean,
-            timestamp: currentTime.getTime(), 
-            readableTime: currentTime.toString() 
-        };
-        localStorage.setItem("user", JSON.stringify(userObject));
+            userdataclean.paymentIntent_id = payment_intent.paymentIntent_id;
+            sessionStorage.setItem("userslowlane", JSON.stringify(userdataclean));
+            localStorage.removeItem("user");
+            const currentTime = new Date();
+            const userObject = {
+                ...userdataclean,
+                timestamp: currentTime.getTime(), 
+                readableTime: currentTime.toString() 
+            };
+            localStorage.setItem("user", JSON.stringify(userObject));
 
-        let zakatBedrag = parseFloat(userdataclean.zakatPay) || 0;
-        let ribaBedrag = parseFloat(userdataclean.ribaValue) || 0;
-        let sadaqahBedrag = parseFloat(userdataclean.sadakaValue) || 0;
-        let hoogsteBedrag = Math.max(zakatBedrag, ribaBedrag, sadaqahBedrag);
-        let paymentType;
+            let zakatBedrag = parseFloat(userdataclean.zakatPay) || 0;
+            let ribaBedrag = parseFloat(userdataclean.ribaValue) || 0;
+            let sadaqahBedrag = parseFloat(userdataclean.sadakaValue) || 0;
+            let hoogsteBedrag = Math.max(zakatBedrag, ribaBedrag, sadaqahBedrag);
+            let paymentType;
 
-        if (hoogsteBedrag === zakatBedrag) {
-            paymentType = 'zakat';
-        } else if (hoogsteBedrag === ribaBedrag) {
-            paymentType = 'riba';
-        } else {
-            paymentType = 'sadaka';
-        }
+            if (hoogsteBedrag === zakatBedrag) {
+                paymentType = 'zakat';
+            } else if (hoogsteBedrag === ribaBedrag) {
+                paymentType = 'riba';
+            } else {
+                paymentType = 'sadaka';
+            }
 
         
-        if (payment_intent.isMonthly) {
-            window.location.replace(payment_intent.paymentUrl)
-        } else if (isIdealPayment) {
-            const resultIdealPayment = await stripe.confirmIdealPayment(payment_intent.clientSecret, {
-                payment_method: {
-                    ideal: idealBank
-                },
-                return_url: `https://calculator.nationaalzakatfonds.nl/betaling?paymentType=${paymentType}&paymentSort=ideal`
-            })
-        } else if (isCardPayment) {
-            const resultCardPayment = await stripe.confirmCardPayment(payment_intent.clientSecret, {
-                payment_method: {
-                    card: card
-                },
-                return_url: `https://calculator.nationaalzakatfonds.nl/betaling?paymentType=${paymentType}&paymentSort=card`
-            })
-            if (resultCardPayment.error) {
-                // Vertaal de foutmelding
-                const translatedErrorMessage = translateStripeError(resultCardPayment.error.message) || 'De betaling met uw Creditcard is niet gelukt, probeer het opnieuw.';
-
-                // Check and remove any existing failed message
-                var existingFailedMessage = document.querySelector('.failed-message');
-                if (existingFailedMessage && existingFailedMessage.parentNode) {
-                    existingFailedMessage.parentNode.removeChild(existingFailedMessage);
+            if (payment_intent.isMonthly) {
+                window.location.replace(payment_intent.paymentUrl)
+            } else if (isIdealPayment) {
+                const resultIdealPayment = await stripe.confirmIdealPayment(payment_intent.clientSecret, {
+                    payment_method: {
+                        ideal: idealBank
+                    },
+                    return_url: `https://calculator.nationaalzakatfonds.nl/betaling?paymentType=${paymentType}&paymentSort=ideal`
+                })
+                // Bij succes stuurt Stripe door naar de bank; alleen een fout komt hier terug.
+                if (resultIdealPayment.error) {
+                    console.error(resultIdealPayment.error);
+                    showPaymentError('De betaling met iDEAL is niet gestart, probeer het opnieuw.');
                 }
-
-                // Create a new failed message div
-                var failedMessage = document.createElement('div');
-                failedMessage.classList.add('failed-message');
-                failedMessage.textContent = translatedErrorMessage;
-                failedMessage.style.color = 'red';
-
-                // Get the reference to the existing div where the new text should be inserted above
-                var referenceDiv = document.querySelector('.impact-tabs-menu.w-tab-menu');
-
-                var buttonText = document.querySelector(".button-text");
-                if (buttonText instanceof HTMLElement) {
-                  buttonText.innerText = "Naar betaling";
+            } else if (isCardPayment) {
+                const resultCardPayment = await stripe.confirmCardPayment(payment_intent.clientSecret, {
+                    payment_method: {
+                        card: card
+                    },
+                    return_url: `https://calculator.nationaalzakatfonds.nl/betaling?paymentType=${paymentType}&paymentSort=card`
+                })
+                if (resultCardPayment.error) {
+                    // Vertaal de foutmelding
+                    const translatedErrorMessage = translateStripeError(resultCardPayment.error.message) || 'De betaling met uw Creditcard is niet gelukt, probeer het opnieuw.';
+                    showPaymentError(translatedErrorMessage);
                 }
-
-                // Insert the new message
-                if (referenceDiv && referenceDiv.parentNode) {
-                    referenceDiv.parentNode.insertBefore(failedMessage, referenceDiv);
-                } else {
-                  console.error('Element or parent of .impact-tabs-menu.w-tab-menu not found');
+                else {
+                    if (paymentType === "riba")
+                        window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-riba`);
+                    else if (paymentType === "zakat")
+                        window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-zakat`);
+                    else if (paymentType === "sadaka")
+                        window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-sadaqah`);
+                    else
+                        window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-sadaqah`);
                 }
             }
-            else {
-                if (paymentType === "riba")
-                    window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-riba`);
-                else if (paymentType === "zakat")
-                    window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-zakat`);
-                else if (paymentType === "sadaka")
-                    window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-sadaqah`);
-                else
-                    window.location.replace(`https://calculator.nationaalzakatfonds.nl/bedankt-voor-jouw-sadaqah`);
-            }
+        } catch (err) {
+            // Zonder dit blijft de knop op "Een ogenblik geduld.." staan: de pagina
+            // zet hem pas terug als dit script de tekst weer verandert.
+            console.error(err);
+            showPaymentError(GENERIC_ERROR);
         }
     })
 };
@@ -294,26 +282,33 @@ const createPaymentIntent = async (amount) => {
         const data = await response.json();
         return data;
     } catch (err) {
-        var buttonText = document.querySelector('.button-text');
-        if (buttonText instanceof HTMLElement) {
-            buttonText.innerText = "Naar betaling";
-        }
-
-        var existingFailedMessage = document.querySelector(".failed-message");
-        if (existingFailedMessage && existingFailedMessage.parentNode) {
-          existingFailedMessage.parentNode.removeChild(existingFailedMessage);
-        }
-        var failedMessage = document.createElement("div");
-        failedMessage.classList.add("failed-message");
-        failedMessage.textContent = "Er is een fout opgetreden. Vernieuw de pagina of controleer je verbinding als het probleem blijft.";
-        failedMessage.style.color = "red";
-        var referenceDiv = document.querySelector(".impact-tabs-menu.w-tab-menu");
-        if (referenceDiv && referenceDiv.parentNode) {
-          referenceDiv.parentNode.insertBefore(failedMessage, referenceDiv);
-        } else {
-          console.error("Element or parent of .impact-tabs-menu.w-tab-menu not found");
-        }
+        showPaymentError(GENERIC_ERROR);
         return null;
+    }
+}
+
+const GENERIC_ERROR = "Er is een fout opgetreden. Vernieuw de pagina of controleer je verbinding als het probleem blijft.";
+
+// Zet de knop terug op "Naar betaling" en toont de melding boven de betaaltabs.
+const showPaymentError = (message: string) => {
+    var buttonText = document.querySelector('.button-text');
+    if (buttonText instanceof HTMLElement) {
+        buttonText.innerText = "Naar betaling";
+    }
+
+    var existingFailedMessage = document.querySelector(".failed-message");
+    if (existingFailedMessage && existingFailedMessage.parentNode) {
+      existingFailedMessage.parentNode.removeChild(existingFailedMessage);
+    }
+    var failedMessage = document.createElement("div");
+    failedMessage.classList.add("failed-message");
+    failedMessage.textContent = message;
+    failedMessage.style.color = "red";
+    var referenceDiv = document.querySelector(".impact-tabs-menu.w-tab-menu");
+    if (referenceDiv && referenceDiv.parentNode) {
+      referenceDiv.parentNode.insertBefore(failedMessage, referenceDiv);
+    } else {
+      console.error("Element or parent of .impact-tabs-menu.w-tab-menu not found");
     }
 }
 
